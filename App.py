@@ -146,6 +146,152 @@ class Toolbar (gtk.Toolbar):
         self.set_border_width(5)
 
 
+class ListPanel_Generic (gtk.VBox):
+    def __init__ (self, email, bug_details_widget, list_widget_class):
+        gtk.VBox.__init__ (self)
+        self.bug_details = bug_details_widget
+
+        # List
+        self.my_list = list_widget_class()
+        self.my_list.get_selection().connect ('changed', self.__cb_tasks_list_row_clicked)
+        gtk.idle_add (self.my_list.do_initial_update, email)
+
+        # Scroll
+        my_list_scrolled = gtk.ScrolledWindow()
+        my_list_scrolled.set_policy(gtk.POLICY_NEVER, gtk.POLICY_AUTOMATIC)
+        my_list_scrolled.add_with_viewport(self.my_list)
+
+        self.pack_start (my_list_scrolled, fill=True, expand=True)
+
+    def deselect_all (self):
+        self.my_list.deselect_all()
+
+    def __cb_tasks_list_row_clicked (self, tree_selection):
+        # Figure out selected bug
+        (model, pathlist) = tree_selection.get_selected_rows()
+        if not len(pathlist):
+            return False
+
+        tree_iter = model.get_iter(pathlist[0])
+        bug_id = model.get_value(tree_iter,0)
+
+        # Load it
+        self.bug_details.load_bug(bug_id)
+
+        # Deselect rest of the lists
+        parent_notebook = self.get_parent()
+        parent_notebook.deselect_all_but_widget (self)
+
+
+class Notebook (gtk.Notebook):
+    def __init__ (self):
+        gtk.Notebook.__init__ (self)
+
+    def deselect_all_but_widget (self, child_widget):
+        for n in range(self.get_n_pages()):
+            page_n_widget = self.get_nth_page(n)
+            if page_n_widget == child_widget:
+                continue
+            if not isinstance(page_n_widget, ListPanel_Generic):
+                continue
+            page_n_widget.deselect_all()
+
+
+class MainWindow (gtk.Window):
+    TITLE = "RHOS Tasks"
+
+    def __init__ (self):
+        # Constructor
+        gtk.Window.__init__ (self, gtk.WINDOW_TOPLEVEL)
+
+        # Basic events
+        self.connect("delete_event", self.__cb_delete_event)
+        self.connect("destroy", self.__cb_destroy)
+
+        # Properties
+        self.maximize()
+        self.set_title(self.TITLE)
+
+        self.vbox = gtk.VBox()
+        self.add (self.vbox)
+
+        toolbar = Toolbar()
+        toolbar.append_item("New", "New Task", "private", None, self._cb_new_clicked)
+        toolbar.append_space()
+        toolbar.append_item("Quit", "Quit App", "private", None, self.__cb_destroy)
+
+        # Bug details
+        self.bug_details = BugDetails()
+
+        bug_details_scrolled = gtk.ScrolledWindow()
+        bug_details_scrolled.set_policy(gtk.POLICY_NEVER, gtk.POLICY_AUTOMATIC)
+        bug_details_scrolled.add_with_viewport(self.bug_details)
+
+        # Tabs
+        self.notebook = Notebook()
+        self.notebook.set_tab_pos(gtk.POS_TOP)
+        self.notebook.append_page(ListPanel_Generic (conf.USER, self.bug_details, MyTasksListWidget), gtk.Label("Tasks"))
+        self.notebook.append_page(ListPanel_Generic (conf.USER, self.bug_details, MyBugsListWidget), gtk.Label("Bugs"))
+
+        # Main panel
+        paned = gtk.HPaned()
+        paned.add1 (self.notebook)
+        paned.add2 (bug_details_scrolled)
+
+        self.vbox.pack_start (toolbar, fill=True, expand=False)
+        self.vbox.pack_start (paned, fill=True, expand=True)
+
+        # Initial state
+        self.bug_details.new_bug()
+
+    def __cb_delete_event(self, widget, event, data=None):
+        return False
+
+    def __cb_destroy(self, widget, data=None):
+        self.hide()
+        gtk.main_quit()
+
+    def _cb_new_clicked (self, widget, *args):
+        def deselect (lists_panel):
+            lists_panel.deselect_all()
+
+        self.notebook.foreach (deselect)
+        self.bug_details.new_bug()
+
+
+def handle_config_files():
+    config_path = os.path.join (os.getenv('HOME'), ".config", "rhos-tasks")
+    if not os.path.exists(config_path):
+        os.makedirs (config_path, 0700)
+
+
+def build_app():
+    # Configuration
+    handle_config_files()
+
+    # Build the GUI
+    window = MainWindow()
+    window.show_all()
+
+    # Deal with the DB cache
+    DB.Memoize.load()
+    atexit.register (lambda: DB.Memoize.save())
+
+
+def run():
+    build_app()
+    gtk.main()
+
+
+
+
+old = """
+#       self.notebook.connect ('switch-page', self.__cb_notebook_changed)
+#   def __cb_notebook_changed (self, notebook, page, page_num):
+#       None
+"""
+
+old = """
 class ListsPanel (gtk.VBox):
     def __init__ (self, email, bug_details_widget):
         gtk.VBox.__init__ (self)
@@ -218,93 +364,7 @@ class ListsPanel (gtk.VBox):
         if re == False:
             return
         self.my_bugs.deselect_all()
-
-
-class MainWindow (gtk.Window):
-    TITLE = "RHOS Tasks"
-
-    def __init__ (self):
-        # Constructor
-        gtk.Window.__init__ (self, gtk.WINDOW_TOPLEVEL)
-
-        # Basic events
-        self.connect("delete_event", self.__cb_delete_event)
-        self.connect("destroy", self.__cb_destroy)
-
-        # Properties
-        self.maximize()
-        self.set_title(self.TITLE)
-
-        self.vbox = gtk.VBox()
-        self.add (self.vbox)
-
-        toolbar = Toolbar()
-        toolbar.append_item("New", "New Task", "private", None, self._cb_new_clicked)
-        toolbar.append_space()
-        toolbar.append_item("Quit", "Quit App", "private", None, self.__cb_destroy)
-
-        # Bug details
-        self.bug_details = BugDetails()
-
-        bug_details_scrolled = gtk.ScrolledWindow()
-        bug_details_scrolled.set_policy(gtk.POLICY_NEVER, gtk.POLICY_AUTOMATIC)
-        bug_details_scrolled.add_with_viewport(self.bug_details)
-
-        # Tabs
-        self.notebook = gtk.Notebook()
-        self.notebook.set_tab_pos(gtk.POS_TOP)
-        self.notebook.append_page(ListsPanel (conf.USER, self.bug_details), gtk.Label("Myself"))
-
-        # Main panel
-        paned = gtk.HPaned()
-        paned.add1 (self.notebook)
-        paned.add2 (bug_details_scrolled)
-
-        self.vbox.pack_start (toolbar, fill=True, expand=False)
-        self.vbox.pack_start (paned, fill=True, expand=True)
-
-        # Initial state
-        self.bug_details.new_bug()
-
-    def __cb_delete_event(self, widget, event, data=None):
-        return False
-
-    def __cb_destroy(self, widget, data=None):
-        self.hide()
-        gtk.main_quit()
-
-    def _cb_new_clicked (self, widget, *args):
-        def deselect (lists_panel):
-            lists_panel.deselect_all()
-
-        self.notebook.foreach (deselect)
-        self.bug_details.new_bug()
-
-
-def handle_config_files():
-    config_path = os.path.join (os.getenv('HOME'), ".config", "rhos-tasks")
-    if not os.path.exists(config_path):
-        os.makedirs (config_path, 0700)
-
-
-def build_app():
-    # Configuration
-    handle_config_files()
-
-    # Build the GUI
-    window = MainWindow()
-    window.show_all()
-
-    # Deal with the DB cache
-    DB.Memoize.load()
-    atexit.register (lambda: DB.Memoize.save())
-
-
-def run():
-    build_app()
-    gtk.main()
-
-
+"""
 
 
 old = """
