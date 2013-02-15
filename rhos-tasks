@@ -1,0 +1,10 @@
+#!/usr/bin/env python
+# -*- mode: python; coding: utf-8 -*-
+
+# AUTHORS:
+#  Alvaro Lopez Ortega <alvaro@redhat.com>
+
+import App
+
+if __name__ == '__main__':
+    App.run()
