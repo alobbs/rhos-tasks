@@ -15,7 +15,7 @@ def get_org_id(mail = conf.USER):
 @DB.Memoize
 def get_direct_reports(mail = conf.USER):
     manager_id = get_org_id()
-    SQL = "select * from \"OrgChart2S.User\" u where u.Manager = '%s'" %(manager_id)
+    SQL = "select uid,realname from \"OrgChart2S.User\" u where u.Manager = '%s'" %(manager_id)
     return DB.fetchall(SQL)
 
 

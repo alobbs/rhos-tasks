@@ -21,6 +21,7 @@ import gobject
 # App
 import DB
 import Bugs
+import Org
 import conf
 import WebView
 import utils
@@ -30,6 +31,7 @@ class BugsListWidget (gtk.TreeView):
     def __init__ (self):
         self.sql = None
         self.sql_result = None
+        self.email = conf.USER
 
         # Widget
         self.treestore = gtk.TreeStore (str, str, str)
@@ -44,6 +46,14 @@ class BugsListWidget (gtk.TreeView):
     def deselect_all (self):
         treeselection = self.get_selection()
         treeselection.unselect_all()
+
+    def set_user (self, email):
+        self.email = email
+        self.sql = None
+        self.sql_result = None
+
+        self._refresh (cache_invalidate = False)
+        self._redraw_list()
 
     def __build_widget (self):
         col = 0
@@ -72,7 +82,9 @@ class BugsListWidget (gtk.TreeView):
         self.column_size.set_sort_column_id (2)
 
     def _refresh (self, cache_invalidate):
-        self.sql_result = DB.fetchall_cacheable (self.sql, cache_invalidate=cache_invalidate)
+        sql = self._get_sql()
+        print sql
+        self.sql_result = DB.fetchall_cacheable (sql, cache_invalidate=cache_invalidate)
         return True
 
     def _redraw_list (self):
@@ -97,27 +109,20 @@ class MyTasksListWidget (BugsListWidget):
     def __init__ (self):
         BugsListWidget.__init__ (self)
 
-    def do_initial_update (self, email):
-        if self.sql == None:
-            user_id = Bugs.get_user_id(email)
-            product_id = Bugs.get_product_id()
-            self.sql = "select * from BugzillaS.bugs bugs where bugs.assigned_to = %s and bugs.product_id = %s and bugs.bug_status != 'CLOSED'" %(user_id, product_id)
+    def _get_sql (self):
+        user_id = Bugs.get_user_id(self.email)
+        product_id = Bugs.get_product_id()
+        return "select * from BugzillaS.bugs bugs where bugs.assigned_to = %s and bugs.product_id = %s and bugs.bug_status != 'CLOSED'" %(user_id, product_id)
 
-        self._refresh (cache_invalidate = False)
-        self._redraw_list()
 
 class MyBugsListWidget (BugsListWidget):
     def __init__ (self):
         BugsListWidget.__init__ (self)
 
-    def do_initial_update (self, email):
-        if self.sql == None:
-            user_id = Bugs.get_user_id(email)
-            product_id = Bugs.get_product_id()
-            self.sql = "select * from BugzillaS.bugs bugs where bugs.assigned_to = %s and bugs.product_id != %s and bugs.bug_status != 'CLOSED'" %(user_id, product_id)
-
-        self._refresh (cache_invalidate = False)
-        self._redraw_list()
+    def _get_sql (self):
+        user_id = Bugs.get_user_id(self.email)
+        product_id = Bugs.get_product_id()
+        return "select * from BugzillaS.bugs bugs where bugs.assigned_to = %s and bugs.product_id != %s and bugs.bug_status != 'CLOSED'" %(user_id, product_id)
 
 
 class BugDetails (gtk.VBox):
@@ -154,7 +159,6 @@ class ListPanel_Generic (gtk.VBox):
         # List
         self.my_list = list_widget_class()
         self.my_list.get_selection().connect ('changed', self.__cb_tasks_list_row_clicked)
-        gtk.idle_add (self.my_list.do_initial_update, email)
 
         # Scroll
         my_list_scrolled = gtk.ScrolledWindow()
@@ -182,6 +186,9 @@ class ListPanel_Generic (gtk.VBox):
         parent_notebook = self.get_parent()
         parent_notebook.deselect_all_but_widget (self)
 
+    def load_user (self, email):
+        self.my_list.set_user (email)
+
 
 class Notebook (gtk.Notebook):
     def __init__ (self):
@@ -196,6 +203,39 @@ class Notebook (gtk.Notebook):
                 continue
             page_n_widget.deselect_all()
 
+    def load_user (self, email):
+        for n in range(self.get_n_pages()):
+            page_n_widget = self.get_nth_page(n)
+            page_n_widget.load_user (email)
+
+
+class Combobox_Users (gtk.ComboBox):
+    def __init__ (self):
+        # Init widget
+        liststore = gtk.ListStore(str)
+        gtk.ComboBox.__init__ (self, liststore)
+        cell = gtk.CellRendererText()
+        self.pack_start(cell, True)
+        self.add_attribute(cell, 'text', 0)
+
+        gtk.idle_add (self.__populate)
+
+    def __populate (self):
+        # Initial values
+        self.__reports = Org.get_direct_reports()
+
+        self.append_text("Myself")
+        for user in self.__reports:
+            self.append_text(user['realname'])
+
+        # Active first entry
+        self.set_active(0)
+
+    def get_active_user (self):
+        active_n = self.get_active()
+        if active_n == 0:
+            return {'uid': conf.USER.split('@')[0], 'realname': 'Myself'}
+        return self.__reports [active_n-1]
 
 class MainWindow (gtk.Window):
     TITLE = "RHOS Tasks"
@@ -233,9 +273,25 @@ class MainWindow (gtk.Window):
         self.notebook.append_page(ListPanel_Generic (conf.USER, self.bug_details, MyTasksListWidget), gtk.Label("Tasks"))
         self.notebook.append_page(ListPanel_Generic (conf.USER, self.bug_details, MyBugsListWidget), gtk.Label("Bugs"))
 
+        # Users
+        self.users_combobox = Combobox_Users()
+        self.users_combobox.connect ('changed', self.__cb_combobox_user_changed)
+
+        user_label = gtk.Label()
+        user_label.set_markup("<b>User</b>")
+
+        user_hbox = gtk.HBox()
+        user_hbox.pack_start (user_label, fill=False, expand=False, padding=7)
+        user_hbox.pack_start (self.users_combobox)
+
+        vbox = gtk.VBox()
+        vbox.pack_start (user_hbox, fill=False, expand=False)
+        vbox.pack_start (gtk.HSeparator(), fill=False, expand=False, padding=7)
+        vbox.pack_start (self.notebook, fill=True, expand=True)
+
         # Main panel
         paned = gtk.HPaned()
-        paned.add1 (self.notebook)
+        paned.add1 (vbox)
         paned.add2 (bug_details_scrolled)
 
         self.vbox.pack_start (toolbar, fill=True, expand=False)
@@ -243,6 +299,17 @@ class MainWindow (gtk.Window):
 
         # Initial state
         self.bug_details.new_bug()
+
+    def __cb_combobox_user_changed (self, combobox):
+        self.notebook.props.sensitive = False
+        utils.process_events()
+
+        user = combobox.get_active_user()
+        email = '%s@redhat.com' %(user['uid'])
+        self.notebook.load_user (email)
+        utils.process_events()
+
+        self.notebook.props.sensitive = True
 
     def __cb_delete_event(self, widget, event, data=None):
         return False
