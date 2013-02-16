@@ -18,6 +18,12 @@ def get_direct_reports(mail = conf.USER):
     SQL = "select uid,realname from \"OrgChart2S.User\" u where u.Manager = '%s'" %(manager_id)
     return DB.fetchall(SQL)
 
+@DB.Memoize
+def get_manager(mail = conf.USER):
+    username = mail.split('@')[0]
+    SQL = "select uid,realname from \"OrgChart2S.User\" u where u.id = ( select Manager from \"OrgChart2S.User\" u where u.Uid = '%s' )" %(username)
+    return DB.fetchall(SQL)
+
 
 if __name__ == "__main__":
     print "%s, ID=%s" %(conf.USER, get_org_id())

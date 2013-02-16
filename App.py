@@ -217,25 +217,35 @@ class Combobox_Users (gtk.ComboBox):
         cell = gtk.CellRendererText()
         self.pack_start(cell, True)
         self.add_attribute(cell, 'text', 0)
+        self.set_row_separator_func (self.__is_separator, None)
 
         gtk.idle_add (self.__populate)
 
     def __populate (self):
         # Initial values
-        self.__reports = Org.get_direct_reports()
+        self.people = [{'uid': conf.USER.split('@')[0], 'realname': 'Myself'}]
+        self.people += ['---']
+        self.people += Org.get_manager()
+        self.people += ['---']
+        self.people += Org.get_direct_reports()
 
-        self.append_text("Myself")
-        for user in self.__reports:
-            self.append_text(user['realname'])
+        for user in self.people:
+            if type(user) == str:
+                self.append_text(user)
+            else:
+                self.append_text(user['realname'])
 
         # Active first entry
         self.set_active(0)
 
+    def __is_separator (self, model, treeiter, data):
+        value = model.get_value (treeiter, 0)
+        return value == '---'
+
     def get_active_user (self):
         active_n = self.get_active()
-        if active_n == 0:
-            return {'uid': conf.USER.split('@')[0], 'realname': 'Myself'}
-        return self.__reports [active_n-1]
+        return self.people[active_n]
+
 
 class MainWindow (gtk.Window):
     TITLE = "RHOS Tasks"
