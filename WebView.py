@@ -6,6 +6,7 @@
 import os
 import ctypes
 import logging
+import fnmatch
 
 # GTK+ imports
 import pygtk
@@ -15,9 +16,18 @@ import gtk
 # WebKit
 import webkit
 
-libgobject = ctypes.CDLL('/lib64/libgobject-2.0.so.0')
-libsoup    = ctypes.CDLL('/lib64/libsoup-2.4.so.1')
-libwebkit  = ctypes.CDLL('/lib64/libwebkitgtk-1.0.so.0')
+
+def find_lib (pre_name):
+    libs = os.listdir('/lib64') + os.listdir('/lib')
+    libs_f = [l for l in libs if fnmatch.fnmatch(l, pre_name)]
+    libs_fs = sorted (libs_f, key=len)
+    return libs_fs[0]
+
+
+libgobject = ctypes.CDLL(find_lib('libgobject-2*so*'))
+libsoup    = ctypes.CDLL(find_lib('libsoup-2*so*'))
+libwebkit  = ctypes.CDLL(find_lib('libwebkitgtk-1*so*'))
+
 
 class Widget (webkit.WebView):
     def __init__ (self, *args, **kws):
