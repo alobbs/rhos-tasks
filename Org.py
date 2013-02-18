@@ -6,23 +6,20 @@
 import DB
 import conf
 
-@DB.Memoize
 def get_org_id(mail = conf.USER):
     username = mail.split('@')[0]
     SQL = "select id from \"OrgChart2S.User\" u where u.Uid = '%s'" %(username)
-    return DB.fetchall(SQL)[0]['id']
+    return DB.fetchall_cacheable(SQL)[0]['id']
 
-@DB.Memoize
 def get_direct_reports(mail = conf.USER):
     manager_id = get_org_id()
     SQL = "select uid,realname from \"OrgChart2S.User\" u where u.Manager = '%s'" %(manager_id)
-    return DB.fetchall(SQL)
+    return DB.fetchall_cacheable(SQL)
 
-@DB.Memoize
 def get_manager(mail = conf.USER):
     username = mail.split('@')[0]
     SQL = "select uid,realname from \"OrgChart2S.User\" u where u.id = ( select Manager from \"OrgChart2S.User\" u where u.Uid = '%s' )" %(username)
-    return DB.fetchall(SQL)
+    return DB.fetchall_cacheable(SQL)
 
 
 if __name__ == "__main__":

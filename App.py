@@ -39,10 +39,6 @@ class BugsListWidget (gtk.TreeView):
         gtk.TreeView.__init__ (self, self.treestore)
         self.__build_widget()
 
-        # Refresh
-        self.refresh_lapse = random.randrange(3*60,5*60)
-        self.refresh_timer = gobject.timeout_add(self.refresh_lapse * 1000, self.__cb_timed_update)
-
     def deselect_all (self):
         treeselection = self.get_selection()
         treeselection.unselect_all()
@@ -52,7 +48,7 @@ class BugsListWidget (gtk.TreeView):
         self.sql = None
         self.sql_result = None
 
-        self._refresh (cache_invalidate = False)
+        self._refresh()
         self._redraw_list()
 
     def __build_widget (self):
@@ -81,10 +77,9 @@ class BugsListWidget (gtk.TreeView):
         self.column_size.add_attribute (self.cell_size, 'text', col)
         self.column_size.set_sort_column_id (2)
 
-    def _refresh (self, cache_invalidate):
+    def _refresh (self):
         sql = self._get_sql()
-        print sql
-        self.sql_result = DB.fetchall_cacheable (sql, cache_invalidate=cache_invalidate)
+        self.sql_result = DB.fetchall_cacheable (sql)
         return True
 
     def _redraw_list (self):
@@ -95,15 +90,6 @@ class BugsListWidget (gtk.TreeView):
         for row in self.sql_result:
             self.treestore.append (None, [row['bug_id'], row['short_desc'], row['bug_status']])
 
-    def __cb_timed_update (self):
-        prev_result = str(self.sql_result)
-
-        self._refresh (cache_invalidate = True)
-
-        if prev_result != str(self.sql_result):
-            self._redraw_list()
-
-        return True
 
 class MyTasksListWidget (BugsListWidget):
     def __init__ (self):
@@ -137,8 +123,8 @@ class BugDetails (gtk.VBox):
         bug_url = conf.BUGZILLA_URL + '/show_bug.cgi?id=%s' %(bug_id)
         self.webview_progress.webview.open(bug_url)
 
-    def new_bug (self):
-        newbug_url = conf.BUGZILLA_URL + '/enter_bug.cgi?product=%s&assigned_to=%s&component=Tasks' %(conf.TASKS_PRODUCT, conf.USER)
+    def new_bug (self, user):
+        newbug_url = conf.BUGZILLA_URL + '/enter_bug.cgi?product=%s&assigned_to=%s&component=Tasks' %(conf.TASKS_PRODUCT, user)
         self.webview_progress.webview.open(newbug_url)
 
 
@@ -308,7 +294,7 @@ class MainWindow (gtk.Window):
         self.vbox.pack_start (paned, fill=True, expand=True)
 
         # Initial state
-        self.bug_details.new_bug()
+        self.bug_details.new_bug(conf.USER)
 
     def __cb_combobox_user_changed (self, combobox):
         self.notebook.props.sensitive = False
@@ -329,17 +315,31 @@ class MainWindow (gtk.Window):
         gtk.main_quit()
 
     def _cb_new_clicked (self, widget, *args):
+        # Deselect list rows
         def deselect (lists_panel):
             lists_panel.deselect_all()
 
         self.notebook.foreach (deselect)
-        self.bug_details.new_bug()
+
+        # New bug page
+        user = self.users_combobox.get_active_user()
+        self.bug_details.new_bug('%s@redhat.com' % (user['uid']))
 
 
 def handle_config_files():
     config_path = os.path.join (os.getenv('HOME'), ".config", "rhos-tasks")
     if not os.path.exists(config_path):
         os.makedirs (config_path, 0700)
+
+
+def thread_autoupdate_func(*args):
+    while True:
+        # Update the queries
+        DB.Memoize.refresh_all()
+
+        # Wait a random time
+        lapse_sec = random.randrange(5*60,10*60)
+        time.sleep (lapse_sec)
 
 
 def build_app():
@@ -354,257 +354,10 @@ def build_app():
     DB.Memoize.load()
     atexit.register (lambda: DB.Memoize.save())
 
+    # Launch auto-updating thread
+    thread_auto = thread.start_new_thread (thread_autoupdate_func, (None,))
+
 
 def run():
     build_app()
     gtk.main()
-
-
-
-
-old = """
-#       self.notebook.connect ('switch-page', self.__cb_notebook_changed)
-#   def __cb_notebook_changed (self, notebook, page, page_num):
-#       None
-"""
-
-old = """
-class ListsPanel (gtk.VBox):
-    def __init__ (self, email, bug_details_widget):
-        gtk.VBox.__init__ (self)
-        self.bug_details = bug_details_widget
-
-        # Tasks
-        self.my_tasks = MyTasksListWidget()
-        self.my_tasks.get_selection().connect ('changed', self.__cb_tasks_list_row_clicked)
-        gtk.idle_add (self.my_tasks.do_initial_update, email)
-
-        my_tasks_scrolled = gtk.ScrolledWindow()
-        my_tasks_scrolled.set_policy(gtk.POLICY_NEVER, gtk.POLICY_AUTOMATIC)
-        my_tasks_scrolled.add_with_viewport(self.my_tasks)
-
-        my_tasks_label = gtk.Label()
-        my_tasks_label.set_justify (gtk.JUSTIFY_LEFT)
-        my_tasks_label.set_markup ('<b>My Tasks</b>')
-
-        # Bugs
-        self.my_bugs = MyBugsListWidget()
-        self.my_bugs.get_selection().connect ('changed', self.__cb_bugs_list_row_clicked)
-        gtk.idle_add (self.my_bugs.do_initial_update, email)
-
-        my_bugs_scrolled = gtk.ScrolledWindow()
-        my_bugs_scrolled.set_policy(gtk.POLICY_NEVER, gtk.POLICY_AUTOMATIC)
-        my_bugs_scrolled.add_with_viewport(self.my_bugs)
-
-        my_bugs_label = gtk.Label()
-        my_bugs_label.set_justify (gtk.JUSTIFY_LEFT)
-        my_bugs_label.set_markup ('<b>My Bugs</b>')
-
-        # Left panel
-        mytasks_vbox = gtk.VBox()
-        mytasks_vbox.pack_start (my_tasks_label, fill=True, expand=False)
-        mytasks_vbox.pack_start (my_tasks_scrolled, fill=True, expand=True)
-
-        mybugs_vbox = gtk.VBox()
-        mybugs_vbox.pack_start (my_bugs_label, fill=True, expand=False)
-        mybugs_vbox.pack_start (my_bugs_scrolled, fill=True, expand=True)
-
-        left = gtk.VPaned()
-        left.add1(mytasks_vbox)
-        left.add2(mybugs_vbox)
-
-        self.pack_start (left, fill=True, expand=True)
-
-    def deselect_all (self):
-        self.my_bugs.deselect_all()
-        self.my_tasks.deselect_all()
-
-    def __handle_row_clicked (self, tree_selection):
-        (model, pathlist) = tree_selection.get_selected_rows()
-        if not len(pathlist):
-            return False
-
-        tree_iter = model.get_iter(pathlist[0])
-        bug_id = model.get_value(tree_iter,0)
-
-        # Load it
-        self.bug_details.load_bug(bug_id)
-
-    def __cb_bugs_list_row_clicked (self, tree_selection):
-        re = self.__handle_row_clicked (tree_selection)
-        if re == False:
-            return
-        self.my_tasks.deselect_all()
-
-    def __cb_tasks_list_row_clicked (self, tree_selection):
-        re = self.__handle_row_clicked (tree_selection)
-        if re == False:
-            return
-        self.my_bugs.deselect_all()
-"""
-
-
-old = """
-
-
-#        self.my_tasks.connect ('button-press-event', self.__cb_list_row_clicked)
-#        self.my_bugs.connect ('button-press-event', self.__cb_list_row_clicked)
-
-#    def __cb_list_row_clicked (self, widget, event):
-        # Only attend to double-click
-#        if event.type != gtk.gdk.BUTTON_PRESS:
-#            return
-
-        # Figure out the row
-        tmp = widget.get_path_at_pos (int(event.x), int(event.y))
-        row_num = tmp[0][0]
-
-        model = widget.get_model()
-        row = model.iter_nth_child(None, row_num)
-        bug_id = model.get_value (row, 0)
-
-        # Load it
-        self.bug_details.load_bug(bug_id)
-"""
-
-old = """
-class NewBugWindow (gtk.Window):
-    TITLE = "New Task"
-
-    def __init__ (self):
-        gtk.Window.__init__ (self)
-
-        self.set_title (self.TITLE)
-        self.resize (1000,820)
-
-        newbug_url = conf.BUGZILLA_URL + '/enter_bug.cgi?product=%s' %(conf.TASKS_PRODUCT)
-
-        webprogress = WebView.Widget_Progress()
-        webprogress.webview.open(newbug_url)
-
-        self.add (webprogress)
-"""
-
-old = """
-class WebViewProgress (gtk.VBox):
-    def __init__ (self):
-        gtk.VBox.__init__ (self)
-
-        # Progress bar
-        self.progressBar = gtk.ProgressBar()
-        self.progressBar.set_size_request(150, -1)
-
-        # WebView
-        self.webview = webkit.WebView()
-        self.webview.connect('load-progress-changed', self.__cb_progress_changed)
-        self.webview.connect('load-started', self.__cb_progress_started)
-        self.webview.connect('load-finished', self.__cb_progress_finished)
-
-        # WebView's scrolled
-        scrolled = gtk.ScrolledWindow()
-        scrolled.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
-        scrolled.add_with_viewport(self.webview)
-
-        # Pack it up
-        self.pack_start (self.progressBar, fill=True, expand=False)
-        self.pack_start (scrolled, fill=True, expand=True)
-
-    def __cb_progress_changed(self, web_view, amount):
-        self.progressBar.set_fraction(amount / 100.0)
-
-    def __cb_progress_started(self, web_view, frame):
-        self.progressBar.show()
-
-    def __cb_progress_finished(self, web_view, frame):
-        self.progressBar.hide()
-"""
-
-old ="""
-class NewBugWindow (gtk.Window):
-    TITLE = "New Task"
-    html_cache = None
-
-    def __init__ (self):
-        gtk.Window.__init__ (self)
-
-        self.html_cache = None
-        self.set_title (self.TITLE)
-        self.webview = webkit.WebView()
-
-        self.webview.connect('document-load-finished', self.__cb_load_finished)
-        self.webview.connect('load-progress-changed', self.__cb_progress_changed)
-        self.webview.connect('load-started', self.__cb_progress_started)
-        self.webview.connect('load-finished', self.__cb_progress_finished)
-
-        self.progressBar = gtk.ProgressBar()
-        self.progressBar.set_size_request(150, -1)
-
-        scrolled = gtk.ScrolledWindow()
-        scrolled.set_policy (gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
-        scrolled.add_with_viewport(self.webview)
-
-        vbox = gtk.VBox()
-        vbox.pack_start (self.progressBar, fill=True, expand=False)
-        vbox.pack_start (scrolled, fill=True, expand=True)
-
-        self.add (vbox)
-        self.resize (1000,820)
-
-        if not NewBugWindow.html_cache:
-            print "Carga"
-            self.webview.load_html_string('<h1 style="text-align: center"><br/><br/>Loading...</h1>', "file:///")
-            utils.process_events()
-
-            newbug_url = conf.BUGZILLA_URL + '/enter_bug.cgi?product=%s' %(conf.TASKS_PRODUCT)
-            self.webview.open(newbug_url)
-        else:
-            print "cache"
-            self.webview.load_html_string(NewBugWindow.html_cache, "file:///")
-
-    def __get_html(self):
-        self.webview.execute_script('oldtitle=document.title;document.title=document.documentElement.innerHTML;')
-        html = self.webview.get_main_frame().get_title()
-        self.webview.execute_script('document.title=oldtitle;')
-        return html
-
-    def __cb_progress_changed(self, web_view, amount):
-        self.progressBar.set_fraction(amount / 100.0)
-
-    def __cb_progress_started(self, web_view, frame):
-            self.progressBar.show()
-
-    def __cb_progress_finished(self, web_view, frame):
-        self.progressBar.hide()
-
-    def __cb_load_finished (self, view, frame):
-        return
-
-        if self.html_cache:
-            return
-
-        html = self.__get_html()
-
-        header_pos = html.find ('<div id="header">')
-        body_pos   = html.find ('<div id="bugzilla-body">')
-
-        print "header_pos", header_pos
-        print "body_pos", body_pos
-
-        if header_pos != -1 and body_pos != -1:
-            self.webview.load_html_string("<script>alert('hola');</script>", "file:///")
-            return
-
-
-
-            clean_html = html[:header_pos]
-            clean_html += html[body_pos:]
-
-            print html[:header_pos]
-            print "-"*70
-            print html[header_pos:body_pos]
-            print "-"*70
-            print html[body_pos:]
-
-            NewBugWindow.html_cache = clean_html
-            self.webview.load_html_string(clean_html, "file:///")
-"""

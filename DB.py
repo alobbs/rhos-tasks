@@ -17,22 +17,21 @@ class Memoize:
         if not Memoize.__cache_path:
             Memoize.__cache_path = os.path.join (os.getenv('HOME'), ".config", "rhos-tasks", "db_cache.pickle")
 
-    def __call__ (self, *args, **kwargs):
-        # Special keywords
-        cache_invalidate = kwargs.pop('cache_invalidate', None)
-
-        # Cache key
-        key = '%s_%s_%s' %(self.f.__name__, str(args), str(kwargs))
-
-        if not cache_invalidate:
-            # Cache
-            if key in self.__cache:
-                return self.__cache[key]
+    def __call__ (self, sql):
+        # Chech cache
+        if sql in self.__cache:
+            return self.__cache[sql]
 
         # Not Cached
-        tmp = self.f(*args, **kwargs)
-        Memoize.__cache[key] = tmp
+        tmp = self.f(sql)
+        Memoize.__cache[sql] = tmp
         return tmp
+
+    @staticmethod
+    def refresh_all():
+        for sql in Memoize.__cache.keys():
+            logging.debug ("Updating query: %s"%(sql))
+            Memoize.__cache[sql] = fetchall(sql)
 
     @staticmethod
     def load():
@@ -68,5 +67,5 @@ def fetchall(sql):
     return re
 
 @Memoize
-def fetchall_cacheable (*args, **kw):
-    return fetchall (*args, **kw)
+def fetchall_cacheable (sql):
+    return fetchall (sql)
